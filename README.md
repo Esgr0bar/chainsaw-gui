@@ -40,6 +40,8 @@ Chainsaw GUI is a Rust-based graphical user interface for the Chainsaw CLI tool.
     ```
 
 2. **Load CSV Files:**
+
+    - Enter the paths to your CSV files in the "CSV File Paths" field, separated by commas.
     - Click "Load CSVs" to load and aggregate the events from all specified files.
 
 3. **Visualize Correlations:**

@@ -1,43 +1,41 @@
-use crate::utils::{read_csv_files, correlate_events, ChainsawEvent};
+use eframe::egui::{CentralPanel, TopBottomPanel, ScrollArea, Context};
+use eframe::{App, NativeOptions, Frame};
+use native_dialog::FileDialog;
+use petgraph::graph::DiGraph;
 use std::path::PathBuf;
-use eframe::egui::{CentralPanel, TopBottomPanel, ScrollArea, Context}; // Updated from CtxRef
-use eframe::{App, NativeOptions, Frame}; // Directly from eframe
+use crate::utils::{read_csv_files, correlate_events, ChainsawEvent};
 
 pub struct ChainsawApp {
     csv_file_paths: Vec<PathBuf>,
     events: Vec<ChainsawEvent>,
-} 
+    csv_loaded: bool,
+    graph: DiGraph<(), ()>, // Assuming DiGraph is from petgraph
+}
 
 impl Default for ChainsawApp {
     fn default() -> Self {
         Self {
             csv_file_paths: vec![],
             events: vec![],
+            csv_loaded: false,
+            graph: DiGraph::new(),
         }
     }
 }
 
-impl ChainsawApp {
-    pub fn load_csv_files(&mut self) {
-        match nfd::open_file_dialog(None, None) {
-            Ok(nfd::Response::Okay(file_path)) => {
-                let path_str = file_path.clone();
-                let path_buf = PathBuf::from(path_str);
-                self.csv_file_paths.push(path_buf);
-            }
-            Ok(nfd::Response::OkayMultiple(file_paths)) => {
-                for file_path in file_paths {
-                    let path_str = file_path.clone();
-                    let path_buf = PathBuf::from(path_str);
-                    self.csv_file_paths.push(path_buf);
-                }
-            }
-            _ => {
-                println!("File dialog cancelled or encountered an error.");
-            }
+impl Clone for ChainsawApp {
+    fn clone(&self) -> Self {
+        Self {
+            csv_file_paths: self.csv_file_paths.clone(),
+            events: self.events.clone(),
+            csv_loaded: self.csv_loaded,
+            graph: self.graph.clone(),
         }
     }
-    pub fn update(&mut self, ctx: &Context, _frame: &Frame) { // Updated CtxRef to Context
+}
+
+impl App for ChainsawApp {
+    fn update(&mut self, ctx: &Context, _frame: &mut Frame) {
         TopBottomPanel::top("top_panel").show(ctx, |ui| {
             ui.label("Chainsaw GUI");
         });
@@ -47,33 +45,74 @@ impl ChainsawApp {
                 self.load_csv_files();
             }
 
-            if !self.csv_file_paths.is_empty() {
-                if let Ok(events) = read_csv_files(&self.csv_file_paths.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>()) {
-                    self.events = events;
+            if !self.csv_file_paths.is_empty() && !self.csv_loaded {
+                println!("CSV file paths: {:?}", self.csv_file_paths);
+                let paths: Vec<String> = self.csv_file_paths.iter().map(|p| p.to_string_lossy().to_string()).collect();
+                match read_csv_files(&paths) {
+                    Ok(events) => {
+                        println!("Parsed events: {:?}", events);
+                        self.events = events;
+                        self.csv_loaded = true; // Set the flag to indicate files have been loaded
+                    }
+                    Err(e) => {
+                        println!("Failed to read CSV files: {:?}", e);
+                        self.csv_loaded = false; // Ensure we retry if the user attempts to load again
+                    }
                 }
             }
 
             if !self.events.is_empty() {
-                let graph = correlate_events(&self.events);
+                self.graph = correlate_events(&self.events);
+                println!("Correlated events: {:?}", self.graph);
                 ScrollArea::both().show(ui, |ui| {
-                    ui.label(format!("{:?}", graph));
+                    ui.label(format!("{:?}", self.graph));
                 });
             }
         });
     }
+}
 
-    pub fn run(&mut self) {
+impl ChainsawApp {
+    pub fn load_csv_files(&mut self) {
+        match FileDialog::new().add_filter("CSV Files", &["csv"]).show_open_multiple_file() {
+            Ok(file_paths) => {
+                println!("Selected files: {:?}", file_paths);
+                self.csv_file_paths = file_paths;
+                self.csv_loaded = false; // Reset the flag to indicate files need to be loaded
+            }
+            Err(e) => {
+                println!("File dialog encountered an error: {:?}", e);
+            }
+        }
+    }
+
+    pub fn run() {
+        let app = ChainsawApp::default();
         let native_options = NativeOptions::default();
+
         eframe::run_native(
             "ChainsawApp",
             native_options,
-            Box::new(|cc| Ok(Box::new(ChainsawApp::default())))
+            Box::new(move |_ctx| Ok(Box::new(app.clone()) as Box<dyn App>)),
         ).expect("Failed to run native");
     }
-}
 
-impl App for ChainsawApp {
-    fn update(&mut self, ctx: &Context, frame: &mut Frame) {
-        self.update(ctx, frame);
+    pub fn update_events(&mut self) {
+        if !self.csv_file_paths.is_empty() && !self.csv_loaded {
+            println!("CSV file paths: {:?}", self.csv_file_paths);
+            let paths: Vec<String> = self.csv_file_paths.iter().map(|p| p.to_string_lossy().to_string()).collect();
+            match read_csv_files(&paths) {
+                Ok(events) => {
+                    println!("Parsed events: {:?}", events);
+                    self.events = events;
+                    self.csv_loaded = true; // Set the flag to indicate files have been loaded
+                    self.graph = correlate_events(&self.events); // Update the graph
+                }
+                Err(e) => {
+                    println!("Failed to read CSV files: {:?}", e);
+                    self.csv_loaded = false; // Ensure we retry if the user attempts to load again
+                }
+            }
+        }
     }
 }
