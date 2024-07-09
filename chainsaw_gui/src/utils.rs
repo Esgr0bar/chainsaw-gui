@@ -1,11 +1,12 @@
+// utils.rs
+
 use csv;
-use petgraph::graph::DiGraph;
 use serde::{Serialize, Deserialize};
 use std::error::Error;
 use csv::ReaderBuilder;
 use std::collections::HashMap;
-use petgraph::graph::{ NodeIndex};
-use petgraph::dot::{Dot, Config};
+use petgraph::graph::{DiGraph, NodeIndex};
+use std::collections::HashSet;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Clone)]
 pub struct ChainsawEvent {
@@ -34,48 +35,36 @@ pub fn read_csv_files(paths: &[String]) -> Result<Vec<ChainsawEvent>, Box<dyn Er
 
     Ok(events)
 }
-/// Correlates ChainsawEvents based on common attributes.
-pub fn correlate_events(events: &[ChainsawEvent]) -> DiGraph<(), ()> {
+
+pub fn correlate_events(events: &[ChainsawEvent]) -> DiGraph<NodeIndex, ()> {
     let mut graph = DiGraph::new();
 
-    // Create a mapping from event_id to node index in the graph
-    let mut event_id_to_node: HashMap<Option<u32>, NodeIndex> = HashMap::new();
+    // HashMap to store nodes (indices) corresponding to each event index
+    let mut event_to_node: HashMap<usize, NodeIndex> = HashMap::new();
+
+    // Create nodes in the graph for each event
     for (index, event) in events.iter().enumerate() {
-        let node_index = graph.add_node(());
-        event_id_to_node.insert(event.event_id, node_index);
+        let node_index = graph.add_node(NodeIndex::new(index));
+        event_to_node.insert(index, node_index);
+        println!("Added node {} for event {:?}", index, event); // Debug print
     }
 
-    // Create edges based on timestamp and event_id similarity
+    // Connect all nodes in the graph
     for i in 0..events.len() {
-        for j in (i + 1)..events.len() {
-            let event1 = &events[i];
-            let event2 = &events[j];
-
-            // Example condition: correlate based on timestamp and event_id
-            if event1.timestamp == event2.timestamp || event1.event_id == event2.event_id {
-                if let Some(node1) = event_id_to_node.get(&event1.event_id) {
-                    if let Some(node2) = event_id_to_node.get(&event2.event_id) {
+        for j in 0..events.len() {
+            if i != j {
+                if let Some(node1) = event_to_node.get(&i) {
+                    if let Some(node2) = event_to_node.get(&j) {
                         graph.add_edge(*node1, *node2, ());
+                        println!("Added edge between node {} and node {}", i, j); // Debug print
                     }
                 }
             }
         }
     }
 
+    println!("Graph nodes count: {}", graph.node_count()); // Debug print
+    println!("Graph edges count: {}", graph.edge_count()); // Debug print
+
     graph
-}
-fn visualize_graph(graph: &DiGraph<(), ()>, events: &[ChainsawEvent]) {
-    let dot = Dot::with_config(graph, &[Config::EdgeNoLabel]);
-
-    // Output DOT format
-    println!("{:?}", dot);
-
-    // You can use a DOT renderer to visualize the graph in an external tool
-    // For demonstration, we'll print out the DOT format here
-    println!("Generated DOT format for visualization:");
-
-    // Print out events for demonstration
-    for (index, event) in events.iter().enumerate() {
-    println!("Event {}: {:?}", index + 1, event);
-}
 }

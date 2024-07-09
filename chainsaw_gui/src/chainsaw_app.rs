@@ -1,72 +1,86 @@
-use eframe::egui::{CentralPanel, TopBottomPanel, ScrollArea, Context};
-use eframe::{App, NativeOptions, Frame};
-use native_dialog::FileDialog;
-use petgraph::graph::DiGraph;
-use std::path::PathBuf;
-use crate::utils::{read_csv_files, correlate_events, ChainsawEvent};
+// chainsaw_app.rs
 
+use eframe::{egui, App, Frame, NativeOptions};
+use native_dialog::FileDialog;
+use petgraph::graph::{DiGraph, NodeIndex};
+use std::path::PathBuf;
+use egui::Shape::Circle as EguiCircle;
+use egui::style::HandleShape::Circle;
+use petgraph::visit::EdgeRef;
+use crate::utils::{ChainsawEvent, correlate_events, read_csv_files};
+
+
+
+#[derive(Clone)]
 pub struct ChainsawApp {
     csv_file_paths: Vec<PathBuf>,
-    events: Vec<ChainsawEvent>,
     csv_loaded: bool,
-    graph: DiGraph<(), ()>, // Assuming DiGraph is from petgraph
+    graph: DiGraph<NodeIndex, ()>,
+    loaded_events: Vec<ChainsawEvent>,
 }
 
 impl Default for ChainsawApp {
     fn default() -> Self {
         Self {
             csv_file_paths: vec![],
-            events: vec![],
             csv_loaded: false,
             graph: DiGraph::new(),
+            loaded_events: Vec::new(),
         }
     }
 }
-
-impl Clone for ChainsawApp {
-    fn clone(&self) -> Self {
-        Self {
-            csv_file_paths: self.csv_file_paths.clone(),
-            events: self.events.clone(),
-            csv_loaded: self.csv_loaded,
-            graph: self.graph.clone(),
-        }
-    }
-}
-
-impl App for ChainsawApp {
-    fn update(&mut self, ctx: &Context, _frame: &mut Frame) {
-        TopBottomPanel::top("top_panel").show(ctx, |ui| {
+impl eframe::App for ChainsawApp {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             ui.label("Chainsaw GUI");
         });
 
-        CentralPanel::default().show(ctx, |ui| {
-            if ui.button("Load CSV files").clicked() {
-                self.load_csv_files();
-            }
-
-            if !self.csv_file_paths.is_empty() && !self.csv_loaded {
-                println!("CSV file paths: {:?}", self.csv_file_paths);
-                let paths: Vec<String> = self.csv_file_paths.iter().map(|p| p.to_string_lossy().to_string()).collect();
-                match read_csv_files(&paths) {
-                    Ok(events) => {
-                        println!("Parsed events: {:?}", events);
-                        self.events = events;
-                        self.csv_loaded = true; // Set the flag to indicate files have been loaded
-                    }
-                    Err(e) => {
-                        println!("Failed to read CSV files: {:?}", e);
-                        self.csv_loaded = false; // Ensure we retry if the user attempts to load again
-                    }
+        egui::CentralPanel::default().show(ctx, |ui| {
+            if !self.csv_loaded {
+                if ui.button("Load CSV files").clicked() {
+                    self.load_csv_files();
+                    println!("CSV files loaded"); // Debug print
+                    println!("Events count: {}", self.loaded_events.len()); // Debug print
                 }
             }
 
-            if !self.events.is_empty() {
-                self.graph = correlate_events(&self.events);
-                println!("Correlated events: {:?}", self.graph);
-                ScrollArea::both().show(ui, |ui| {
-                    ui.label(format!("{:?}", self.graph));
-                });
+            if self.csv_loaded {
+                println!("Displaying nodes and edges"); // Debug print
+
+                // Example: correlate events into graph
+                self.graph = correlate_events(&self.loaded_events);
+                println!("Nodes count: {}", self.graph.node_count()); // Debug print
+                println!("Edges count: {}", self.graph.edge_count()); // Debug print
+
+                // Display nodes with their names
+                for node_index in self.graph.node_indices() {
+                    if let Some(event) = self.loaded_events.get(node_index.index()) {
+                        let node_name = format!(
+                            "{} - {}",
+                            event.timestamp.as_deref().unwrap_or_default(),
+                            event.path.as_deref().unwrap_or_default()
+                        );
+                        ui.label(node_name);
+                    } else {
+                        ui.label(format!("Node {}", node_index.index()));
+                    }
+                }
+
+                // Draw lines or arrows between nodes
+                for edge in self.graph.edge_references() {
+                    let _source_index = edge.source();
+                    let _target_index = edge.target();
+
+                    // Example fixed positions for simplicity
+                    let source_pos = egui::Pos2::new(50.0, 50.0);
+                    let target_pos = egui::Pos2::new(150.0, 150.0);
+
+                    let points = [source_pos, target_pos];
+                    let stroke = egui::Stroke::new(1.0, egui::Color32::BLACK);
+
+                    // Draw a line segment between source and target
+                    ui.painter().line_segment(points, stroke);
+                }
             }
         });
     }
@@ -74,18 +88,35 @@ impl App for ChainsawApp {
 
 impl ChainsawApp {
     pub fn load_csv_files(&mut self) {
-        match FileDialog::new().add_filter("CSV Files", &["csv"]).show_open_multiple_file() {
+        match FileDialog::new()
+            .add_filter("CSV Files", &["csv"])
+            .show_open_multiple_file()
+        {
             Ok(file_paths) => {
                 println!("Selected files: {:?}", file_paths);
-                self.csv_file_paths = file_paths;
-                self.csv_loaded = false; // Reset the flag to indicate files need to be loaded
+
+                // Convert Vec<PathBuf> to Vec<String>
+                let file_paths_str: Vec<String> = file_paths
+                    .iter()
+                    .map(|path| path.to_string_lossy().to_string())
+                    .collect();
+
+                // Read CSV files into events
+                match read_csv_files(&file_paths_str) {
+                    Ok(events) => {
+                        self.loaded_events = events;
+                        self.csv_loaded = true; // Set the flag to indicate files are loaded
+                    }
+                    Err(e) => {
+                        println!("Error reading CSV files: {:?}", e);
+                    }
+                }
             }
             Err(e) => {
                 println!("File dialog encountered an error: {:?}", e);
             }
         }
     }
-
     pub fn run() {
         let app = ChainsawApp::default();
         let native_options = NativeOptions::default();
@@ -95,24 +126,5 @@ impl ChainsawApp {
             native_options,
             Box::new(move |_ctx| Ok(Box::new(app.clone()) as Box<dyn App>)),
         ).expect("Failed to run native");
-    }
-
-    pub fn update_events(&mut self) {
-        if !self.csv_file_paths.is_empty() && !self.csv_loaded {
-            println!("CSV file paths: {:?}", self.csv_file_paths);
-            let paths: Vec<String> = self.csv_file_paths.iter().map(|p| p.to_string_lossy().to_string()).collect();
-            match read_csv_files(&paths) {
-                Ok(events) => {
-                    println!("Parsed events: {:?}", events);
-                    self.events = events;
-                    self.csv_loaded = true; // Set the flag to indicate files have been loaded
-                    self.graph = correlate_events(&self.events); // Update the graph
-                }
-                Err(e) => {
-                    println!("Failed to read CSV files: {:?}", e);
-                    self.csv_loaded = false; // Ensure we retry if the user attempts to load again
-                }
-            }
-        }
     }
 }
