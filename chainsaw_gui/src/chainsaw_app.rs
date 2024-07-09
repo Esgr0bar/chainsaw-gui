@@ -1,5 +1,3 @@
-// chainsaw_app.rs
-
 use eframe::{egui, App, Frame, NativeOptions};
 use native_dialog::FileDialog;
 use petgraph::graph::{DiGraph, NodeIndex};
@@ -9,13 +7,11 @@ use egui::style::HandleShape::Circle;
 use petgraph::visit::EdgeRef;
 use crate::utils::{ChainsawEvent, correlate_events, read_csv_files};
 
-
-
 #[derive(Clone)]
 pub struct ChainsawApp {
     csv_file_paths: Vec<PathBuf>,
     csv_loaded: bool,
-    graph: DiGraph<NodeIndex, ()>,
+    graph: DiGraph<(), ()>, // Changed DiGraph to use unit type for node and edge data
     loaded_events: Vec<ChainsawEvent>,
 }
 
@@ -29,6 +25,7 @@ impl Default for ChainsawApp {
         }
     }
 }
+
 impl eframe::App for ChainsawApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
@@ -39,52 +36,61 @@ impl eframe::App for ChainsawApp {
             if !self.csv_loaded {
                 if ui.button("Load CSV files").clicked() {
                     self.load_csv_files();
-                    println!("CSV files loaded"); // Debug print
-                    println!("Events count: {}", self.loaded_events.len()); // Debug print
                 }
             }
 
             if self.csv_loaded {
-                println!("Displaying nodes and edges"); // Debug print
+                // Correlate events into graph if not already correlated
+                if self.graph.node_count() == 0 {
+                    self.graph = correlate_events(&self.loaded_events);
+                }
 
-                // Example: correlate events into graph
-                self.graph = correlate_events(&self.loaded_events);
-                println!("Nodes count: {}", self.graph.node_count()); // Debug print
-                println!("Edges count: {}", self.graph.edge_count()); // Debug print
+                // Calculate positions for nodes in a circular layout
+                let node_count = self.graph.node_count() as f32;
+                let center = egui::Pos2::new(300.0, 300.0);
+                let radius = 200.0;
+                let angle_step = 2.0 * std::f32::consts::PI / node_count;
 
-                // Display nodes with their names
-                for node_index in self.graph.node_indices() {
-                    if let Some(event) = self.loaded_events.get(node_index.index()) {
-                        let node_name = format!(
+                // Draw nodes in a circular layout
+                for (i, node_index) in self.graph.node_indices().enumerate() {
+                    // Calculate position for each node
+                    let angle = angle_step * i as f32;
+                    let x = center.x + radius * angle.cos();
+                    let y = center.y + radius * angle.sin();
+                    let node_pos = egui::Pos2::new(x, y);
+
+                    // Display node name near the circle
+                    let label_pos = egui::Pos2::new(x + 20.0, y); // Adjust label position as needed
+                    let node_name = if let Some(event) = self.loaded_events.get(node_index.index()) {
+                        format!(
                             "{} - {}",
                             event.timestamp.as_deref().unwrap_or_default(),
                             event.path.as_deref().unwrap_or_default()
-                        );
-                        ui.label(node_name);
+                        )
                     } else {
-                        ui.label(format!("Node {}", node_index.index()));
+                        format!("Node {}", node_index.index())
+                    };
+
+                    // Use ui.label to display the node name
+                    ui.label(node_name.clone()).interact_rect.left_top();
+
+                    // Draw connections (edges) between nodes
+                    for edge in self.graph.edges(node_index) {
+                        if let target_index = edge.target() {
+                            // Calculate target position
+                            if let Some(target_pos) = self.node_position(target_index, node_count, center, radius, angle_step) {
+                                let points = [node_pos, target_pos];
+                                let stroke = egui::Stroke::new(1.0, egui::Color32::BLACK);
+                                ui.painter().line_segment(points, stroke);
+                            }
+                        }
                     }
-                }
-
-                // Draw lines or arrows between nodes
-                for edge in self.graph.edge_references() {
-                    let _source_index = edge.source();
-                    let _target_index = edge.target();
-
-                    // Example fixed positions for simplicity
-                    let source_pos = egui::Pos2::new(50.0, 50.0);
-                    let target_pos = egui::Pos2::new(150.0, 150.0);
-
-                    let points = [source_pos, target_pos];
-                    let stroke = egui::Stroke::new(1.0, egui::Color32::BLACK);
-
-                    // Draw a line segment between source and target
-                    ui.painter().line_segment(points, stroke);
                 }
             }
         });
     }
 }
+
 
 impl ChainsawApp {
     pub fn load_csv_files(&mut self) {
@@ -117,6 +123,18 @@ impl ChainsawApp {
             }
         }
     }
+
+    fn node_position(&self, node_index: NodeIndex, node_count: f32, center: egui::Pos2, radius: f32, angle_step: f32) -> Option<egui::Pos2> {
+        if node_index.index() < node_count as usize {
+            let angle = angle_step * node_index.index() as f32;
+            let x = center.x + radius * angle.cos();
+            let y = center.y + radius * angle.sin();
+            Some(egui::Pos2::new(x, y))
+        } else {
+            None
+        }
+    }
+
     pub fn run() {
         let app = ChainsawApp::default();
         let native_options = NativeOptions::default();

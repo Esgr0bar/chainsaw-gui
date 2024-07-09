@@ -1,12 +1,9 @@
-// utils.rs
-
 use csv;
 use serde::{Serialize, Deserialize};
 use std::error::Error;
 use csv::ReaderBuilder;
 use std::collections::HashMap;
 use petgraph::graph::{DiGraph, NodeIndex};
-use std::collections::HashSet;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Clone)]
 pub struct ChainsawEvent {
@@ -35,29 +32,26 @@ pub fn read_csv_files(paths: &[String]) -> Result<Vec<ChainsawEvent>, Box<dyn Er
 
     Ok(events)
 }
-
-pub fn correlate_events(events: &[ChainsawEvent]) -> DiGraph<NodeIndex, ()> {
+pub fn correlate_events(events: &[ChainsawEvent]) -> DiGraph<(), ()> {
     let mut graph = DiGraph::new();
 
     // HashMap to store nodes (indices) corresponding to each event index
     let mut event_to_node: HashMap<usize, NodeIndex> = HashMap::new();
 
     // Create nodes in the graph for each event
-    for (index, event) in events.iter().enumerate() {
-        let node_index = graph.add_node(NodeIndex::new(index));
-        event_to_node.insert(index, node_index);
-        println!("Added node {} for event {:?}", index, event); // Debug print
+    for _ in events.iter() {
+        let node_index = graph.add_node(());
+        // event_to_node.insert(index, node_index); // No need to store this mapping anymore
     }
 
-    // Connect all nodes in the graph
+    // Connect nodes based on correlations
     for i in 0..events.len() {
         for j in 0..events.len() {
             if i != j {
-                if let Some(node1) = event_to_node.get(&i) {
-                    if let Some(node2) = event_to_node.get(&j) {
-                        graph.add_edge(*node1, *node2, ());
-                        println!("Added edge between node {} and node {}", i, j); // Debug print
-                    }
+                // Example correlation based on timestamp
+                if events[i].timestamp == events[j].timestamp {
+                    graph.add_edge(NodeIndex::new(i), NodeIndex::new(j), ());
+                    println!("Added edge between node {} and node {}", i, j); // Debug print
                 }
             }
         }
