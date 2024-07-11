@@ -1,26 +1,26 @@
-// src/chainsaw_app.rs
-
 use eframe::{egui, App, NativeOptions};
 use native_dialog::FileDialog;
 use petgraph::graph::{DiGraph, NodeIndex};
+use petgraph::dot::{Dot, Config};
 use std::path::PathBuf;
-use crate::utils::{ChainsawEvent, correlate_events, read_csv_files, parse_timestamp};
 use petgraph::visit::EdgeRef;
+use crate::utils::{ChainsawEvent, correlate_events, read_csv_files, parse_timestamp};
 use std::collections::{HashMap, HashSet};
-use std::time::Duration;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Utc, Duration}; // Import chrono::Duration
 
 #[derive(Clone)]
 pub struct ChainsawApp {
     csv_file_paths: Vec<PathBuf>,
     csv_loaded: bool,
-    graph: DiGraph<(), ()>,
     loaded_events: Vec<ChainsawEvent>,
     selected_type: Option<String>,
     sort_criteria: SortCriteria,
     search_query: String,
-    unique_types: HashSet<String>, // Add the unique_types field
-    delta: Duration, // Add the delta field
+    unique_types: HashSet<String>,
+    delta: Duration, // Use chrono::Duration
+    show_correlated_events: bool,
+    correlated_graph: Option<DiGraph<String, ()>>, // Use String labels for nodes
+    selected_node: Option<NodeIndex>, // Add field for selected node
 }
 
 #[derive(Clone, PartialEq)]
@@ -28,11 +28,14 @@ enum SortCriteria {
     Date(Duration),
     SID,
     Path,
+    event_id,
+    computer,
+    user
 }
 
 impl Default for SortCriteria {
     fn default() -> Self {
-        SortCriteria::Date(Duration::from_secs(0))
+        SortCriteria::Date(Duration::seconds(0))
     }
 }
 
@@ -41,17 +44,18 @@ impl Default for ChainsawApp {
         Self {
             csv_file_paths: vec![],
             csv_loaded: false,
-            graph: DiGraph::new(),
             loaded_events: Vec::new(),
             selected_type: None,
-            sort_criteria: SortCriteria::Date(Duration::from_secs(0)),
-            search_query: String::new(), // Add search_query initialization
+            sort_criteria: SortCriteria::Date(Duration::seconds(0)), // Set default delta to 1 minute
+            search_query: String::new(),
             unique_types: HashSet::new(),
-            delta: Duration::from_secs(0),
+            delta: Duration::minutes(1), // Set default delta to 1 minute
+            show_correlated_events: false,
+            correlated_graph: None,
+            selected_node: None, // Initialize selected_node
         }
     }
 }
-
 
 impl eframe::App for ChainsawApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -67,7 +71,6 @@ impl eframe::App for ChainsawApp {
                     ui.separator();
                     ui.heading("Event Type Selection");
 
-                    // Add "Select All" checkbox
                     let mut select_all = self.selected_type.is_none();
                     if ui.checkbox(&mut select_all, "Select All").clicked() {
                         if select_all {
@@ -78,7 +81,6 @@ impl eframe::App for ChainsawApp {
                     }
 
                     if !select_all {
-                        // Dropdown for selecting event type
                         egui::ComboBox::from_label("Event Type")
                             .selected_text(self.selected_type.clone().unwrap_or_default())
                             .show_ui(ui, |ui| {
@@ -98,21 +100,21 @@ impl eframe::App for ChainsawApp {
                     ui.heading("Sort Criteria");
 
                     ui.horizontal(|ui| {
-                        ui.selectable_value(&mut self.sort_criteria, SortCriteria::Date(Duration::from_secs(3600)), "Date");
+                        ui.selectable_value(&mut self.sort_criteria, SortCriteria::Date(Duration::hours(1)), "Date");
                         ui.selectable_value(&mut self.sort_criteria, SortCriteria::SID, "SID");
                         ui.selectable_value(&mut self.sort_criteria, SortCriteria::Path, "Path");
+                        ui.selectable_value(&mut self.sort_criteria, SortCriteria::user, "User");
+                        ui.selectable_value(&mut self.sort_criteria, SortCriteria::computer, "Computer");
                     });
 
                     ui.separator();
                     ui.heading("Search");
 
-                    // Add search field with autocomplete
                     ui.horizontal(|ui| {
                         ui.label("Search:");
                         ui.text_edit_singleline(&mut self.search_query);
                     });
 
-                    // Autocomplete suggestions
                     if !self.search_query.is_empty() {
                         let suggestions: Vec<&str> = self
                             .loaded_events
@@ -140,13 +142,23 @@ impl eframe::App for ChainsawApp {
                     }
 
                     ui.separator();
-                    self.display_sorted_events(ui);
+
+                    // Button to show correlated events
+                    if ui.button("Show Correlated Events").clicked() {
+                        self.show_correlated_events = true;
+                        self.correlated_graph = Some(correlate_events(&self.loaded_events, self.delta));
+                    }
+
+                    if self.show_correlated_events {
+                        self.display_correlated_events(ui);
+                    } else {
+                        self.display_sorted_events(ui);
+                    }
                 }
             });
         });
     }
 }
-
 
 impl ChainsawApp {
     pub fn load_csv_files(&mut self) {
@@ -157,11 +169,10 @@ impl ChainsawApp {
             Ok(file_paths) => {
                 println!("Selected files: {:?}", file_paths);
 
-                // Read CSV files into events
                 match read_csv_files(&file_paths) {
                     Ok(events) => {
                         self.loaded_events = events;
-                        self.csv_loaded = true; // Set the flag to indicate files are loaded
+                        self.csv_loaded = true;
                         self.extract_unique_types();
                     }
                     Err(e) => {
@@ -181,40 +192,7 @@ impl ChainsawApp {
             .collect();
     }
 
-    fn display_csv_file_types(&mut self, ui: &mut egui::Ui) {
-        ui.label("Select CSV file type:");
-        for csv_type in &self.unique_types {
-            if ui.button(csv_type).clicked() {
-                self.selected_type = Some(csv_type.clone());
-            }
-        }
-        if ui.button("Select All").clicked() {
-            self.selected_type = None;
-        }
-    }
-
-    fn display_sorting_options(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            ui.label("Sort by:");
-            if ui.button("Date").clicked() {
-                // Let user enter delta value
-                let mut delta_secs = self.delta.as_secs() as i32;
-                ui.add(egui::DragValue::new(&mut delta_secs).speed(1).clamp_range(0..=3600));
-                self.delta = Duration::from_secs(delta_secs as u64);
-                self.sort_criteria = SortCriteria::Date(self.delta);
-            }
-            if ui.button("SID").clicked() {
-                self.sort_criteria = SortCriteria::SID;
-            }
-            if ui.button("Path").clicked() {
-                self.sort_criteria = SortCriteria::Path;
-            }
-        });
-    }
-}
-impl ChainsawApp {
     fn display_sorted_events(&self, ui: &mut egui::Ui) {
-        // Filter events based on the selected type
         let filtered_events: Vec<&ChainsawEvent> = match &self.selected_type {
             Some(selected_type) if !selected_type.is_empty() => self.loaded_events.iter()
                 .filter(|event| event.detections.as_deref() == Some(selected_type))
@@ -222,7 +200,6 @@ impl ChainsawApp {
             _ => self.loaded_events.iter().collect(),
         };
 
-        // Filter events based on the search query
         let filtered_events: Vec<&ChainsawEvent> = filtered_events.into_iter()
             .filter(|event| {
                 event.timestamp.as_deref().unwrap_or_default().contains(&self.search_query) ||
@@ -235,14 +212,13 @@ impl ChainsawApp {
             })
             .collect();
 
-        // Sort events based on the selected criteria
         let mut sorted_events = filtered_events.to_vec();
         match self.sort_criteria {
             SortCriteria::Date(delta) => {
                 sorted_events.sort_by(|a, b| {
                     let ts_a = parse_timestamp(a.timestamp.as_deref().unwrap_or_default()).unwrap_or(Utc::now());
                     let ts_b = parse_timestamp(b.timestamp.as_deref().unwrap_or_default()).unwrap_or(Utc::now());
-                    (ts_a - ts_b).num_seconds().abs().cmp(&(delta.as_secs() as i64))
+                    (ts_a - ts_b).num_seconds().abs().cmp(&(delta.num_seconds()))
                 });
             }
             SortCriteria::SID => {
@@ -251,9 +227,19 @@ impl ChainsawApp {
             SortCriteria::Path => {
                 sorted_events.sort_by(|a, b| a.path.cmp(&b.path));
             }
+            
+            SortCriteria::event_id => {
+                sorted_events.sort_by(|a, b| a.event_id.cmp(&b.event_id));
+            }
+            SortCriteria::computer => {
+                sorted_events.sort_by(|a, b| a.computer.cmp(&b.computer));
+            }
+            
+            SortCriteria::user => {
+                sorted_events.sort_by(|a, b| a.user.cmp(&b.user));
+            }
         }
 
-        // Display sorted events in columns
         ui.separator();
         egui::ScrollArea::vertical().show(ui, |ui| {
             ui.columns(9, |columns| {
@@ -281,10 +267,74 @@ impl ChainsawApp {
             });
         });
     }
-}
 
+    fn display_correlated_events(&mut self, ui: &mut egui::Ui) {
+        if let Some(graph) = &self.correlated_graph {
+            let mut clicked_node = self.selected_node;
 
-impl ChainsawApp {
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                for node_index in graph.node_indices() {
+                    let node_label = graph[node_index].clone();
+
+                    // Create a button for each node
+                    let button_text = format!("Node {}", node_index.index() + 1);
+                    let button_response = ui.button(button_text);
+
+                    // Check if the button is clicked
+                    if button_response.clicked() {
+                        clicked_node = Some(node_index);
+                    }
+
+                    // Display node label horizontally
+                    ui.horizontal(|ui| {
+                        ui.label(node_label);
+                    });
+                }
+            });
+
+            // Handle node click event outside of the ScrollArea
+            if let Some(clicked_node) = clicked_node {
+                ui.separator();
+                ui.heading("Event Details:");
+
+                // Display details of the clicked node
+                let node_label = graph[clicked_node].clone();
+                ui.horizontal(|ui| {
+                    ui.label("Node details:");
+                    ui.label(&node_label);
+                });
+
+                ui.separator();
+                ui.heading("Related Events:");
+
+                // Display edges and related nodes
+                for edge in graph.edges_directed(clicked_node, petgraph::Direction::Outgoing) {
+                    let target_node_index = edge.target();
+                    let target_label = graph[target_node_index].clone();
+
+                    let edge_label = format!("{} -> {}", clicked_node.index() + 1, target_node_index.index() + 1);
+
+                    // Display edge label and show details button
+                    ui.horizontal(|ui| {
+                        ui.label(edge_label);
+                        if ui.button("Show Details").clicked() {
+                            self.selected_node = Some(target_node_index);
+                        }
+                    });
+
+                    // Indent to show details of the target node if selected
+                    if Some(target_node_index) == self.selected_node {
+                        ui.indent(20, |ui| {
+                            ui.label("Node details:");
+                            ui.label(&target_label);
+                        });
+                    }
+                }
+            }
+        } else {
+            ui.label("No correlated events found.");
+        }
+    }
     pub fn run() {
         let app = ChainsawApp::default();
         let native_options = NativeOptions::default();
