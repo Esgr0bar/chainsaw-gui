@@ -77,7 +77,3 @@ timestamp,detections,path,Event ID,Record ID,Computer,Service Name,Service File 
 
 ## Ackowledgements
   - Thanks to WithSecureLabs for developing Chainsaw.
-## Long time idea
-  - integrate directly chansaw in thr gui it will directly use the good cli and import the input
-## Very long time idea
-  - refactor the code to be fully generics so it will be capable to do it for any csv files format

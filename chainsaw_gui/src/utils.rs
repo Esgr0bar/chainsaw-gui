@@ -9,11 +9,6 @@ use std::io;
 use std::fs::File;
 use std::io::BufReader;
 
-pub fn parse_timestamp(ts: &str) -> Result<DateTime<Utc>, chrono::ParseError> {
-    let parsed_datetime: DateTime<FixedOffset> = DateTime::parse_from_rfc3339(ts)?;
-    let datetime_utc: DateTime<Utc> = parsed_datetime.into();
-    Ok(datetime_utc)
-}
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Clone)]
 pub struct ChainsawEvent {
@@ -56,47 +51,36 @@ pub fn read_csv_files(file_paths: &[PathBuf]) -> io::Result<Vec<ChainsawEvent>> 
     Ok(events)
 }
 
-pub fn correlate_events(events: &[ChainsawEvent], delta: Duration) -> DiGraph<String, ()> {
+
+pub fn correlate_events(events: &[ChainsawEvent], delta: Duration) -> DiGraph<ChainsawEvent, ()> {
     let mut graph = DiGraph::new();
     let mut event_to_node: HashMap<usize, NodeIndex> = HashMap::new();
-    let mut correlation_map: HashMap<String, Vec<usize>> = HashMap::new();
 
     for (i, event) in events.iter().enumerate() {
-        let label = format!("{:?}", event); // Use the event details as the label
-        let node_index = graph.add_node(label);
+        let node_index = graph.add_node(event.clone());
         event_to_node.insert(i, node_index);
-
-        if let Some(timestamp) = &event.timestamp {
-            if let Ok(ts) = parse_timestamp(timestamp) {
-                let time_key = ts.timestamp().to_string();
-                correlation_map.entry(time_key).or_default().push(i);
-
-                for j in (1..=delta.num_seconds()).chain(1..=delta.num_seconds()) {
-                    let adjusted_time_key = (ts + chrono::Duration::seconds(j)).timestamp().to_string();
-                    correlation_map.entry(adjusted_time_key).or_default().push(i);
-                }
-            }
-        }
-
-        if let Some(sid) = &event.user_sid {
-            correlation_map.entry(sid.clone()).or_default().push(i);
-        }
-        if let Some(path) = &event.path {
-            correlation_map.entry(path.clone()).or_default().push(i);
-        }
     }
 
-    for correlated_indices in correlation_map.values() {
-        for &source in correlated_indices {
-            for &target in correlated_indices {
-                if source != target {
-                    let source_node = event_to_node[&source];
-                    let target_node = event_to_node[&target];
-                    if !graph.contains_edge(source_node, target_node) {
-                        graph.add_edge(source_node, target_node, ());
-                    }
+    for i in 0..events.len() {
+        let event_i = &events[i];
+
+        for j in (i + 1)..events.len() {
+            let event_j = &events[j];
+
+            // Example correlation logic: correlate events if they have the same user_sid
+            if event_i.user_sid == event_j.user_sid {
+                let node_i = event_to_node[&i];
+                let node_j = event_to_node[&j];
+
+                // Add edge if it doesn't exist already
+                if !graph.contains_edge(node_i, node_j) {
+                    graph.add_edge(node_i, node_j, ());
                 }
             }
+
+            // Add more correlation logic based on other fields as needed
+            // Example: correlate events if they have the same path
+            // if event_i.path == event_j.path { ... }
         }
     }
 
