@@ -114,14 +114,12 @@ impl ChainsawApp {
                 egui::ComboBox::from_label("Event Type")
                     .selected_text(self.selected_type.clone().unwrap_or_default())
                     .show_ui(ui, |ui| {
-                        for event in &self.loaded_events {
-                            if let Some(detection) = &event.detections {
-                                ui.selectable_value(
-                                    &mut self.selected_type,
-                                    Some(detection.clone()),
-                                    detection,
-                                );
-                            }
+                        for event_type in &self.unique_types {
+                            ui.selectable_value(
+                                &mut self.selected_type,
+                                Some(event_type.clone()),
+                                event_type,
+                            );
                         }
                     });
             }
@@ -375,8 +373,9 @@ impl ChainsawApp {
     fn extract_unique_types(&mut self) {
         self.unique_types = self.loaded_events.iter()
             .filter_map(|event| event.detections.clone())
-            .collect();
+            .collect(); // Use HashSet to ensure uniqueness
     }
+
 
     pub fn run() {
         let app = ChainsawApp::default();
